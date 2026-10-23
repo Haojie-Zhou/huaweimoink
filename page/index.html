@@ -297,6 +297,7 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
 
     <div class="row" id="presets">
       <button class="preset on" data-m="natural">自然暖调</button>
+      <button class="preset" data-m="instant">拍立得</button>
       <button class="preset" data-m="adaptive">全面暖色</button>
       <button class="preset" data-m="gray">纯灰度</button>
       <button class="preset" data-m="naive">原色直出</button>
@@ -786,6 +787,7 @@ var DEF = {
   warmBoost: 0.60, coolPull: 0.25, coolCap: 60, coolDesat: 0.25,
   warmPull: 0.12, warmPullCap: 18,
   autoLevels: 1, sharpen: 0.30,
+  lookStrength: 0.65,
   dither: "fs", ditherStrength: 0.85, space: "std",
   text: "", textFont: 0, textSize: 100,
   textColor: 0,
@@ -796,6 +798,8 @@ var DEF = {
 var CORE = {
   natural:  { key: "warmBoost", def: 0.60, lab: "色彩强度",
               hint: "只提亮画面里本来就是暖色的部分，冷色区域保持干净的黑白。" },
+  instant:  { key: "lookStrength", def: 0.65, lab: "胶片强度",
+              hint: "抬黑位、压高光、暖亮部冷暗部，再叠一点暗角；强度 0 等于自然暖调。" },
   adaptive: { key: "warmCast",  def: 0.40, lab: "暖色浓度",
               hint: "把整圈色相压进红→黄这一段，红黄最多，但照片会明显偏暖。" },
   gray:     { key: null, lab: "色彩强度", hint: "纯灰度，只做明暗抖动。适合文档、线条画。" },
@@ -1074,6 +1078,59 @@ function quantize(mapped, w, h, cfg){
   return out;
 }
 
+/* 拍立得外观层（不进入冻结算法区）：在 warmMap 之后、quantize 之前叠加。
+   只做逐像素的 fade 曲线 + 分离色调 + 轻暗角，强度 0 原样返回，
+   强度 1 为定稿 classic 档；不改 warmMap / quantize 的逐字冻结实现。
+   曲线与分离色调预生成 256 级 LUT，避免每像素 3 次 Math.pow。 */
+var INST_CURVE = null, INST_SH = null, INST_HI = null;
+function applyInstantLook(buf, w, h, strength){
+  var s = clamp(+strength || 0, 0, 1);
+  if (s <= 0) return buf;
+  var fade = 18, white = 242, gamma = 0.92, tint = 0.70, vig = 0.18;
+  if (!INST_CURVE){
+    INST_CURVE = new Float32Array(256);
+    INST_SH = new Float32Array(256);
+    INST_HI = new Float32Array(256);
+    for (var i = 0; i < 256; i++){
+      INST_CURVE[i] = fade + (white - fade) * Math.pow(i/255, gamma);
+      var tv = i/255;
+      INST_SH[i] = (1-tv)*(1-tv)*tint;
+      INST_HI[i] = tv*tv*tint;
+    }
+  }
+  var curve = INST_CURVE, shT = INST_SH, hiT = INST_HI;
+  var out = new Float64Array(buf.length);
+  var cx = (w - 1) / 2, cy = (h - 1) / 2, rmax = Math.sqrt(cx*cx + cy*cy);
+  for (var y = 0; y < h; y++){
+    var dy = (y - cy) / rmax;
+    for (var x = 0; x < w; x++){
+      var o = (y*w + x) * 3;
+      var r0 = buf[o], g0 = buf[o+1], b0 = buf[o+2];
+      /* 1) fade：抬黑位、压高光，模拟即时胶片被岁月漂白（LUT） */
+      var ri = r0 < 0 ? 0 : (r0 > 255 ? 255 : (r0 + 0.5)|0);
+      var gi = g0 < 0 ? 0 : (g0 > 255 ? 255 : (g0 + 0.5)|0);
+      var bi = b0 < 0 ? 0 : (b0 > 255 ? 255 : (b0 + 0.5)|0);
+      var r = curve[ri], g = curve[gi], b = curve[bi];
+      /* 2) 分离色调：暗部偏青、亮部偏暖（按亮度查表） */
+      var li = (0.2126*r + 0.7152*g + 0.0722*b + 0.5)|0;
+      if (li < 0) li = 0; else if (li > 255) li = 255;
+      var sh = shT[li], hi = hiT[li];
+      r += 9*hi - 7*sh; g += 3*hi + 2*sh; b += 7*sh - 9*hi;
+      /* 3) 轻暗角 */
+      var dx = (x - cx) / rmax;
+      var d = Math.sqrt(dx*dx + dy*dy);
+      var k = (d - 0.45) / 0.55;
+      if (k < 0) k = 0; else if (k > 1) k = 1;
+      var f = 1 - vig*(k*k*(3 - 2*k));
+      var rr = r0 + (r*f - r0)*s, gg = g0 + (g*f - g0)*s, bb = b0 + (b*f - b0)*s;
+      out[o]   = rr < 0 ? 0 : (rr > 255 ? 255 : rr);
+      out[o+1] = gg < 0 ? 0 : (gg > 255 ? 255 : gg);
+      out[o+2] = bb < 0 ? 0 : (bb > 255 ? 255 : bb);
+    }
+  }
+  return out;
+}
+
 /* ==================================================================
    渲染与打包（与固件帧契约一致）
    ================================================================== */
@@ -1251,7 +1308,15 @@ function drawBase(ctx, cw, ch){
               w:Math.round(r0.w*sc), h:Math.round(r0.h*sc) };
     var cc = getCropCanvas(r.w, r.h);
     if (cc && cc.width && cc.height){
-      var idx0 = quantize(warmMap(toBuf(cc), r.w, r.h, cfg), r.w, r.h, cfg);
+      var mapped;
+      if (cfg.mode === "instant"){
+        /* 拍立得：先走自然暖调，再叠外观层；冻结的 warmMap/quantize 原样复用 */
+        mapped = warmMap(toBuf(cc), r.w, r.h, Object.assign({}, cfg, { mode:"natural" }));
+        mapped = applyInstantLook(mapped, r.w, r.h, cfg.lookStrength);
+      } else {
+        mapped = warmMap(toBuf(cc), r.w, r.h, cfg);
+      }
+      var idx0 = quantize(mapped, r.w, r.h, cfg);
       var im = ctx.createImageData(r.w, r.h), dd = im.data;
       for (var i = 0; i < r.w*r.h; i++){
         var p = PAL[idx0[i]];
@@ -1765,7 +1830,7 @@ function setCtrlVal(c, val){
   cfg[c.key] = +el.value / c.sc;
 }
 function modeName(m){
-  return { natural:"自然暖调", adaptive:"全面暖色", gray:"纯灰度", naive:"原色直出" }[m] || m;
+  return { natural:"自然暖调", instant:"拍立得", adaptive:"全面暖色", gray:"纯灰度", naive:"原色直出" }[m] || m;
 }
 function mark(elId, isDef){ var el = $(elId); if (el) el.classList.toggle("off", !!isDef); }
 function refreshDefMarks(){
@@ -1869,6 +1934,7 @@ $("resetAdv").addEventListener("click", function(){
   cfg.dither = DEF.dither;  dmodeEl.value = DEF.dither;
   cfg.space = DEF.space; spaceEl.value = DEF.space;
   cfg.autoLevels = DEF.autoLevels; levelsEl.checked = !!DEF.autoLevels;
+  cfg.lookStrength = DEF.lookStrength;
   applyMode(DEF.mode);
   refreshDefMarks(); saveCfg(); schedulePreview(false);
   msg("已恢复默认参数（" + modeName(DEF.mode) + "）", "ok");
