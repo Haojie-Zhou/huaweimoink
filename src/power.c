@@ -7,6 +7,7 @@
 #include "netif_ap.h"
 #include "ota_web.h"
 #include "driver/gpio.h"
+#include "driver/usb_serial_jtag.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_attr.h"
 #include "esp_sleep.h"
@@ -119,6 +120,11 @@ uint32_t power_next_wake_s(void)
 
 bool power_should_sleep(void)
 {
+    /* USB 连着电脑（有 SOF）时不睡：C3 深睡会关掉 USB PHY，COM 口直接消失，
+       正在用 USB 传图的电脑就找不到设备了。接充电宝没有 SOF，不会触发这条；
+       拔掉 USB 后仍按 sleep_s / wake_s 正常休眠。 */
+    if (usb_serial_jtag_is_connected()) return false;
+
     const moink_settings_t *s = settings_get();
     uint32_t limit = s->sleep_s;
 

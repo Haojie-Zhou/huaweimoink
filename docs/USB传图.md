@@ -30,6 +30,10 @@
 - 帧头/载荷与 `POST /api/frame` 完全一致：768×552 → 105,984 字节载荷。
 - 固件复用同一块 frame buffer 和同一把锁；USB 与 Wi-Fi 不会并发踩帧。
 
+## USB 连接时保持唤醒
+
+固件检测到 USB 主机在发 SOF（即连着正在工作的电脑）时，`power_should_sleep()` 直接返回 false：不会深睡，COM 口不会消失。接充电宝没有 SOF，不会触发；拔掉 USB 后仍按 `sleep_s` / `wake_s` 正常休眠。
+
 ## 常见问题
 
 - **COM 口不存在**：设备深睡。按一下板子按键或拔插 USB，等 COM 口出现再发。
