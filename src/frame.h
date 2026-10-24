@@ -67,6 +67,12 @@ esp_err_t frame_upload_handler(httpd_req_t *req);
 int frame_recv_locked(httpd_req_t *req, uint16_t *w, uint16_t *h, uint32_t *len);
 void frame_unlock(void);
 uint8_t *frame_buf(void);        /* 缓冲未就绪时返回 NULL，调用方必须判空 */
+
+/* USB 收帧：先 frame_lock()，把载荷写进 frame_buf()，成功后 frame_commit()；
+   失败/放弃时 frame_abort()。frame_commit 会释放锁并唤醒显示任务。 */
+int frame_lock(uint32_t timeout_ms);
+int frame_commit(uint16_t w, uint16_t h);
+void frame_abort(void);
 int frame_show_slot(uint8_t slot);
 void frame_queue_slot(uint8_t slot);
 int frame_display_pending(void);

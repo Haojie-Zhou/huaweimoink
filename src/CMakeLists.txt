@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 set(MOINK_SRCS
     "main.c" "epd_drv.c" "settings.c" "netif_ap.c" "captive.c"
-    "ota_web.c" "frame.c" "power.c" "store.c" "carousel.c"
+    "ota_web.c" "frame.c" "usb_frame.c" "power.c" "store.c" "carousel.c"
     "calendar.c" "cal_face.c" "cal_font.c" "todo.c")
 
 idf_component_register(
@@ -11,6 +11,7 @@ idf_component_register(
     PRIV_REQUIRES driver nvs_flash esp_wifi esp_netif esp_event
                   esp_http_server esp_adc esp_hw_support
                   app_update spi_flash esp_partition esp_timer lwip
+                  esp_driver_usb_serial_jtag
 )
 
 # PIO 的 ESP-IDF 集成不记录对生成头/版本头的隐式依赖（改了链接仍用旧内容），

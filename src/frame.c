@@ -134,6 +134,30 @@ uint8_t *frame_buf(void)
     return s_fb;
 }
 
+/* USB 收帧用：把锁/提交从 HTTP 路径里拆出来，复用同一块 s_fb 和同一把锁。
+   frame_lock 成功返回 0 且锁被持有；frame_commit 负责设置几何、释放锁、
+   唤醒显示任务；frame_abort 只释放锁。 */
+int frame_lock(uint32_t timeout_ms)
+{
+    if (!s_fb) return -1;
+    return xSemaphoreTake(s_fb_mutex, pdMS_TO_TICKS(timeout_ms)) == pdTRUE ? 0 : -1;
+}
+
+int frame_commit(uint16_t w, uint16_t h)
+{
+    if (!s_fb) return -1;
+    s_fw = w;
+    s_fh = h;
+    xSemaphoreGive(s_fb_mutex);
+    xSemaphoreGive(s_frame_ready);
+    return 0;
+}
+
+void frame_abort(void)
+{
+    xSemaphoreGive(s_fb_mutex);
+}
+
 /* 收帧（头 + 载荷 + CRC）入 s_fb。成功返回 0 且 s_fb_mutex 仍被持有
    （调用方必须 frame_unlock()）；失败返回负值，锁已释放、响应已发出。 */
 int frame_recv_locked(httpd_req_t *req, uint16_t *w, uint16_t *h, uint32_t *len)

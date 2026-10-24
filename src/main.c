@@ -58,6 +58,7 @@
 #include "netif_ap.h"
 #include "captive.h"
 #include "frame.h"
+#include "usb_frame.h"
 #include "power.h"
 #include "ota_web.h"
 #include "store.h"
@@ -655,6 +656,7 @@ void app_main(void)
     xTaskCreate(frame_task, "frame", 4096, NULL, 5, NULL);
     xTaskCreate(idle_monitor_task, "idle_mon", 3072, NULL, 4, NULL);
     xTaskCreate(button_task, "button", 3072, NULL, 4, NULL);
+    usb_frame_start();   /* USB CDC 收图：与 HTTP /api/frame 共用帧缓冲 */
 
     ESP_LOGI(TAG, "ready: %s @ http://192.168.4.1%s%s (heap %lu)",
              netif_ap_ssid(),

@@ -380,6 +380,8 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
     <div id="actions">
       <div id="stathint"></div>
       <button class="sec" id="go" style="width:100%" disabled>上传并刷新屏幕</button>
+      <button class="mini" id="exportFrame" style="width:100%;margin-top:8px">导出帧（USB）</button>
+      <div class="hint">USB：导出 frame.bin 后，在电脑运行 <code>python tools/send_frame_usb.py COM6 frame.bin</code></div>
       <div id="bar"><div id="fill"></div></div>
       <p id="msg" aria-live="polite"></p>
     </div>
@@ -2289,6 +2291,24 @@ function upload(){
   xhr.send(body);
 }
 goEl.addEventListener("click", upload);
+
+/* USB 传图：导出带 16 字节头的 2bpp 帧，PC 端用 tools/send_frame_usb.py 发到 COM 口。
+   不依赖 Wi-Fi，页面离线也能用。 */
+$("exportFrame").addEventListener("click", function(){
+  if (!img){ msg("请先选择图片", "err"); return; }
+  if (!previewOK){ msg("预览生成中，请稍候再导出", "err"); return; }
+  var body;
+  try { body = frameWithHeader(packFull()); }
+  catch(e){ msg("合成失败：" + e.message, "err"); return; }
+  var blob = new Blob([body], { type:"application/octet-stream" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = "frame.bin";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 1500);
+  msg("已导出 frame.bin（" + (body.length/1024).toFixed(0) +
+      " KB）。在电脑运行 python tools/send_frame_usb.py COM6 frame.bin", "ok");
+});
 
 /* ---------- 设备信息 / 设置 ---------- */
 /* R1.3.0 评审 P2-3：设置页写入浏览器历史——Android 系统返回键可回创作页（此前直接退出页面），
